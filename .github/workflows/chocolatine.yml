@@ -7,14 +7,31 @@ on:
 
 env:
   MIRROR_SSH_URL: "git@github.com:F0undhack/choco.git"
-  EXECUTABLES: "my_ls"
+  EXECUTABLES: "mysh"
 
 jobs:
+  setup:
+    name: Determine if the workflow should run
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - id: check
+        shell: bash
+        run: |
+          branch="${{ github.head_ref || github.ref_name }}"
+          if [[ "$branch" == no-ga/* ]]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$MIRROR_SSH_URL" == *"${{ github.repository }}"* ]]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   check_compilation_and_coding_style:
     name: Check compilation and coding style
-    if: >-
-      !startsWith(github.head_ref || github.ref_name, 'no-ga/') &&
-      !contains(env.MIRROR_SSH_URL, github.repository)
+    needs: setup
+    if: needs.setup.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     container: epitechcontent/epitest-docker
     env:
@@ -81,7 +98,8 @@ jobs:
 
   run_tests:
     name: Run tests
-    needs: check_compilation_and_coding_style
+    needs: [setup, check_compilation_and_coding_style]
+    if: success() && needs.setup.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     container: epitechcontent/epitest-docker
     steps:
@@ -97,8 +115,8 @@ jobs:
 
   push_to_mirror:
     name: Push to mirror repository
-    needs: run_tests
-    if: success() && github.event_name == 'push'
+    needs: [setup, run_tests]
+    if: success() && needs.setup.outputs.should_run == 'true' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
