@@ -1,0 +1,114 @@
+name: Chocolatine
+
+on:
+  push:
+  pull_request:
+    types: [opened]
+
+env:
+  MIRROR_SSH_URL: "git@github.com:F0undhack/choco.git"
+  EXECUTABLES: "my_ls"
+
+jobs:
+  check_compilation_and_coding_style:
+    name: Check compilation and coding style
+    if: >-
+      !startsWith(github.head_ref || github.ref_name, 'no-ga/') &&
+      !contains(env.MIRROR_SSH_URL, github.repository)
+    runs-on: ubuntu-latest
+    container: epitechcontent/epitest-docker
+    env:
+      CC: epiclang
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+          fetch-depth: 1
+
+      - name: Check for banned files and repo structure
+        run: banana-check-repo
+
+      - name: Build the project
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -o pipefail
+          make 2>&1 | tee coding-style-reports.log
+
+      - name: Annotate coding style errors
+        if: always()
+        run: |
+          if [ -s coding-style-reports.log ]; then
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              file=$(echo "$line" | cut -d: -f1 | sed 's|^\./||')
+              lineno=$(echo "$line" | cut -d: -f2)
+              severity=$(echo "$line" | cut -d: -f3 | cut -d: -f1 | xargs)
+              rule=$(echo "$line" | cut -d: -f3 | cut -d: -f2 | xargs)
+              desc=$(echo "$line" | cut -d: -f4- | xargs)
+              echo "::error file=${file},line=${lineno},title=${severity} coding style error (${rule})::${desc}"
+            done < coding-style-reports.log
+          fi
+
+      - name: Fail if coding style errors were found
+        if: always()
+        run: |
+          if [ -s coding-style-reports.log ]; then
+            echo "Coding style errors were found, check the annotations above."
+            exit 1
+          fi
+          echo "No coding style error."
+
+      - name: Clean build artifacts
+        if: always()
+        run: make clean
+
+      - name: Verify executables
+        if: always()
+        run: |
+          status=0
+          for exe in $(echo "$EXECUTABLES" | tr ',' ' '); do
+            if [ ! -f "$exe" ]; then
+              echo "::error title=Missing executable::'$exe' was not produced by the build"
+              status=1
+            elif [ ! -x "$exe" ]; then
+              echo "::error title=Non-executable file::'$exe' exists but is not executable"
+              status=1
+            fi
+          done
+          exit $status
+
+  run_tests:
+    name: Run tests
+    needs: check_compilation_and_coding_style
+    runs-on: ubuntu-latest
+    container: epitechcontent/epitest-docker
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+          fetch-depth: 1
+
+      - name: Run tests
+        timeout-minutes: 2
+        run: make tests_run
+
+  push_to_mirror:
+    name: Push to mirror repository
+    needs: run_tests
+    if: success() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Mirror to Epitech repository
+        uses: pixta-dev/repository-mirroring-action@v1
+        with:
+          target_repo_url: ${{ env.MIRROR_SSH_URL }}
+          ssh_private_key: ${{ secrets.GIT_SSH_PRIVATE_KEY }}
