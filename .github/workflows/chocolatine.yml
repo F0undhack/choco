@@ -7,7 +7,7 @@ on:
 
 env:
   MIRROR_SSH_URL: "git@github.com:F0undhack/choco.git"
-  EXECUTABLES: "mysh"
+  EXECUTABLES: "my_ls"
 
 jobs:
   setup:
@@ -56,7 +56,8 @@ jobs:
       - name: Annotate coding style errors
         if: always()
         run: |
-          if [ -s coding-style-reports.log ]; then
+          grep -E '^\./[^:]+:[0-9]+: (MAJOR|MINOR|INFO):' coding-style-reports.log > filtered-coding-style.log 2>/dev/null || true
+          if [ -s filtered-coding-style.log ]; then
             while IFS= read -r line; do
               [ -z "$line" ] && continue
               file=$(echo "$line" | cut -d: -f1 | sed 's|^\./||')
@@ -65,13 +66,14 @@ jobs:
               rule=$(echo "$line" | cut -d: -f3 | cut -d: -f2 | xargs)
               desc=$(echo "$line" | cut -d: -f4- | xargs)
               echo "::error file=${file},line=${lineno},title=${severity} coding style error (${rule})::${desc}"
-            done < coding-style-reports.log
+            done < filtered-coding-style.log
           fi
 
       - name: Fail if coding style errors were found
         if: always()
         run: |
-          if [ -s coding-style-reports.log ]; then
+          grep -E '^\./[^:]+:[0-9]+: (MAJOR|MINOR|INFO):' coding-style-reports.log > filtered-coding-style.log 2>/dev/null || true
+          if [ -s filtered-coding-style.log ]; then
             echo "Coding style errors were found, check the annotations above."
             exit 1
           fi
