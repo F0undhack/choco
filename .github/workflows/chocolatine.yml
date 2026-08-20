@@ -17,9 +17,12 @@ jobs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
       - id: check
+        shell: bash
         run: |
           branch="${{ github.head_ref || github.ref_name }}"
-          if [[ "$branch" == no-ga/* || "$MIRROR_SSH_URL" == *"${{ github.repository }}"* ]]; then
+          if [[ "$branch" == no-ga/* ]]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$MIRROR_SSH_URL" == *"${{ github.repository }}"* ]]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
@@ -34,16 +37,18 @@ jobs:
     env:
       CC: epiclang
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref || github.ref }}
           fetch-depth: 1
 
-      - name: Check repo structure
+      - name: Check for banned files and repo structure
         run: banana-check-repo
 
       - name: Build the project
         timeout-minutes: 2
+        shell: bash
         run: |
           set -o pipefail
           make 2>&1 | tee coding-style-reports.log
@@ -51,17 +56,28 @@ jobs:
       - name: Annotate coding style errors
         if: always()
         run: |
-          grep -E '^\./[^:]+:[0-9]+: (MAJOR|MINOR|INFO):' coding-style-reports.log > filtered.log 2>/dev/null || true
-          awk -F: '{
-            file=$1; sub(/^\.\//,"",file); sev=$3; rule=$4;
-            gsub(/^ +| +$/,"",sev); gsub(/^ +| +$/,"",rule);
-            msg=$5; for(i=6;i<=NF;i++) msg=msg":"$i; gsub(/^ +/,"",msg);
-            printf "::error file=%s,line=%s,title=%s coding style error (%s)::%s\n",file,$2,sev,rule,msg
-          }' filtered.log
+          grep -E '^\./[^:]+:[0-9]+: (MAJOR|MINOR|INFO):' coding-style-reports.log > filtered-coding-style.log 2>/dev/null || true
+          if [ -s filtered-coding-style.log ]; then
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              file=$(echo "$line" | cut -d: -f1 | sed 's|^\./||')
+              lineno=$(echo "$line" | cut -d: -f2)
+              severity=$(echo "$line" | cut -d: -f3 | cut -d: -f1 | xargs)
+              rule=$(echo "$line" | cut -d: -f3 | cut -d: -f2 | xargs)
+              desc=$(echo "$line" | cut -d: -f4- | xargs)
+              echo "::error file=${file},line=${lineno},title=${severity} coding style error (${rule})::${desc}"
+            done < filtered-coding-style.log
+          fi
 
       - name: Fail if coding style errors were found
         if: always()
-        run: '[ -s filtered.log ] && exit 1 || echo "No coding style error."'
+        run: |
+          grep -E '^\./[^:]+:[0-9]+: (MAJOR|MINOR|INFO):' coding-style-reports.log > filtered-coding-style.log 2>/dev/null || true
+          if [ -s filtered-coding-style.log ]; then
+            echo "Coding style errors were found, check the annotations above."
+            exit 1
+          fi
+          echo "No coding style error."
 
       - name: Clean build artifacts
         if: always()
@@ -72,8 +88,13 @@ jobs:
         run: |
           status=0
           for exe in $(echo "$EXECUTABLES" | tr ',' ' '); do
-            [ ! -f "$exe" ] && echo "::error::'$exe' not found" && status=1
-            [ -f "$exe" ] && [ ! -x "$exe" ] && echo "::error::'$exe' is not executable" && status=1
+            if [ ! -f "$exe" ]; then
+              echo "::error title=Missing executable::'$exe' was not produced by the build"
+              status=1
+            elif [ ! -x "$exe" ]; then
+              echo "::error title=Non-executable file::'$exe' exists but is not executable"
+              status=1
+            fi
           done
           exit $status
 
@@ -84,7 +105,8 @@ jobs:
     runs-on: ubuntu-latest
     container: epitechcontent/epitest-docker
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref || github.ref }}
           fetch-depth: 1
@@ -99,12 +121,14 @@ jobs:
     if: success() && needs.setup.outputs.should_run == 'true' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
-      - uses: pixta-dev/repository-mirroring-action@v1
+      - name: Mirror to Epitech repository
+        uses: pixta-dev/repository-mirroring-action@v1
         with:
           target_repo_url: ${{ env.MIRROR_SSH_URL }}
           ssh_private_key: ${{ secrets.GIT_SSH_PRIVATE_KEY }}
