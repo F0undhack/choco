@@ -17,7 +17,6 @@ void my_put_float(double nb)
     int dec;
     double pd;
     int pe = (int)nb;
-
     if (nb < 0) {
         my_putchar('-');
         nb = -nb;
